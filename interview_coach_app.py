@@ -1,3 +1,6 @@
+import wave
+from io import BytesIO
+import json
 import random
 import streamlit as st
 from google import genai
@@ -169,3 +172,186 @@ if st.session_state.history:
             st.markdown(f"**{i}. [{cat}]** {q}")
             st.write(a)
             st.markdown("")
+# ============================================================
+# NEW FEATURES: Voice Practice + Resume Analyzer + Dashboard
+# ============================================================
+
+FILLER_WORDS = ["um", "uh", "umm", "uhh", "like", "you know", "sort of",
+                "kind of", "basically", "actually", "literally", "i mean"]
+
+if "history" not in st.session_state:
+    st.session_state.history = []
+if "resume_text" not in st.session_state:
+    st.session_state.resume_text = None
+if "resume_feedback" not in st.session_state:
+    st.session_state.resume_feedback = None
+
+
+def get_audio_duration_seconds(audio_bytes):
+    try:
+        with wave.open(BytesIO(audio_bytes), "rb") as wf:
+            return wf.getnframes() / float(wf.getframerate())
+    except Exception:
+        return None
+
+
+def analyze_vocal_delivery(audio_bytes, transcript):
+    duration_s = get_audio_duration_seconds(audio_bytes)
+    words = [w.strip(".,!?") for w in transcript.split() if w.strip(".,!?")]
+    word_count = len(words)
+    wpm = round(word_count / (duration_s / 60), 1) if duration_s else None
+
+    filler_count = sum(transcript.lower().count(f) for f in FILLER_WORDS)
+    filler_ratio = filler_count / word_count if word_count else 0
+
+    pace_score, pace_label = 100, "N/A"
+    if wpm is not None:
+        if 110 <= wpm <= 165:
+            pace_score, pace_label = 100, "Great pace"
+        elif wpm < 110:
+            pace_score, pace_label = max(
+                40, 100 - (110 - wpm) * 1.5), "A bit slow / hesitant"
+        else:
+            pace_score, pace_label = max(
+                40, 100 - (wpm - 165) * 1.2), "Talking fast — may read as nervous"
+
+    filler_score = max(0, 100 - filler_ratio * 400)
+    vocal_confidence = round(0.6 * pace_score + 0.4 * filler_score)
+
+    return {"wpm": wpm, "pace_label": pace_label, "filler_count": filler_count,
+            "vocal_confidence": vocal_confidence}
+
+
+def transcribe_audio(audio_bytes):
+    response = client.models.generate_content(
+        model="gemini-flash-latest",
+        contents=[{"text": "Transcribe this spoken interview answer exactly, word for word."},
+                  {"inline_data": {"mime_type": "audio/wav", "data": audio_bytes}}],
+    )
+    return response.text
+
+
+def score_answer(question, answer, category):
+    prompt = f"""You are a strict but fair interview coach.
+Question ({category}): {question}
+Answer: "{answer}"
+Respond in raw JSON only, no markdown fences:
+{{"score": <1-10>, "strengths": ["..."], "improvements": ["..."], "model_answer_snippet": "..."}}"""
+    raw = client.models.generate_content(
+        model="gemini-flash-latest", contents=prompt).text
+    raw = raw.strip().removeprefix("json").removeprefix("").removesuffix("").strip()
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return {"score": None, "raw": raw}
+
+
+def extract_resume_text(uploaded_file):
+    name = uploaded_file.name.lower()
+    data = uploaded_file.read()
+    if name.endswith(".pdf"):
+        from pypdf import PdfReader
+        return "\n".join(p.extract_text() or "" for p in PdfReader(BytesIO(data)).pages)
+    elif name.endswith(".docx"):
+        import docx
+        return "\n".join(p.text for p in docx.Document(BytesIO(data)).paragraphs)
+    return data.decode("utf-8", errors="ignore")
+
+
+def analyze_resume(resume_text, target_role=""):
+    prompt = f"""You are a blunt hiring manager. Give honest, specific feedback, no generic praise.
+Target role: {target_role or "Not specified"}
+Resume: \"\"\"{resume_text}\"\"\"
+Respond in raw JSON only:
+{{"overall_score": <1-10>, "strengths": ["..."], "weaknesses": ["..."],
+"missing_quantification": ["..."], "one_line_verdict": "..."}}"""
+    raw = client.models.generate_content(
+        model="gemini-flash-latest", contents=prompt).text
+    raw = raw.strip().removeprefix("json").removeprefix("").removesuffix("").strip()
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return {"error": "Could not parse", "raw": raw}
+
+
+st.markdown("---")
+st.header("🎙️ Voice Practice, Resume Analyzer & Dashboard")
+
+new_tab1, new_tab2, new_tab3 = st.tabs(
+    ["🗣️ Voice Practice", "📄 Resume Analyzer", "📊 Dashboard"])
+
+with new_tab1:
+    category = st.selectbox("Category", list(QUESTIONS.keys()), key="new_cat")
+    if st.button("🎲 New Question", key="new_q_btn"):
+        st.session_state.current_q = random.choice(QUESTIONS[category])
+    if "current_q" not in st.session_state:
+        st.session_state.current_q = random.choice(QUESTIONS[category])
+
+    st.markdown(f"### “{st.session_state.current_q}”")
+    audio_value = st.audio_input("Record your answer")
+    typed = st.text_area("...or type your answer")
+
+    if st.button("✅ Submit Answer", key="submit_new"):
+        answer_text, vocal_stats = None, None
+        if audio_value is not None:
+            answer_text = transcribe_audio(audio_value.getvalue())
+            vocal_stats = analyze_vocal_delivery(
+                audio_value.getvalue(), answer_text)
+        elif typed.strip():
+            answer_text = typed.strip()
+
+        if answer_text:
+            result = score_answer(
+                st.session_state.current_q, answer_text, category)
+            if result.get("score") is not None:
+                st.session_state.history.append({"category": category, "question": st.session_state.current_q,
+                                                 "answer": answer_text, "score": result["score"],
+                                                 "feedback": result, "vocal_stats": vocal_stats})
+                st.progress(result["score"] / 10)
+                st.markdown(f"*Score: {result['score']}/10*")
+                if vocal_stats:
+                    v1, v2, v3 = st.columns(3)
+                    v1.metric("Pace", f"{vocal_stats['wpm']} wpm")
+                    v2.metric("Filler words", vocal_stats["filler_count"])
+                    v3.metric("Vocal Confidence",
+                              f"{vocal_stats['vocal_confidence']}/100")
+                for s in result.get("strengths", []):
+                    st.markdown(f"✅ {s}")
+                for imp in result.get("improvements", []):
+                    st.markdown(f"🔧 {imp}")
+
+with new_tab2:
+    target_role = st.text_input("Target role (optional)")
+    uploaded = st.file_uploader(
+        "Upload resume (PDF/DOCX)", type=["pdf", "docx"])
+    if uploaded and st.button("🔍 Analyze Resume"):
+        st.session_state.resume_text = extract_resume_text(uploaded)
+        st.session_state.resume_feedback = analyze_resume(
+            st.session_state.resume_text, target_role)
+
+    fb = st.session_state.resume_feedback
+    if fb and "error" not in fb:
+        st.metric("Resume Score", f"{fb['overall_score']}/10")
+        st.markdown(f"*Verdict:* {fb['one_line_verdict']}")
+        for s in fb.get("strengths", []):
+            st.markdown(f"✅ {s}")
+        for w in fb.get("weaknesses", []):
+            st.markdown(f"⚠️ {w}")
+        for m in fb.get("missing_quantification", []):
+            st.markdown(f"📊 {m}")
+
+with new_tab3:
+    history = st.session_state.history
+    if not history:
+        st.info("Answer some questions to see stats here.")
+    else:
+        scores = [h["score"] for h in history]
+        st.metric("Avg Score", f"{sum(scores)/len(scores):.1f}/10")
+        st.line_chart({"Score": scores})
+        for h in reversed(history):
+            with st.expander(f"[{h['category']}] {h['question'][:50]}... — {h['score']}/10"):
+                st.markdown(f"*Answer:* {h['answer']}")
+                if h.get("vocal_stats"):
+                    st.markdown(f"Vocal: {h['vocal_stats']['wpm']} wpm, "
+                                f"{h['vocal_stats']['filler_count']} fillers, "
+                                f"{h['vocal_stats']['vocal_confidence']}/100 confidence")
