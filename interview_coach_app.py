@@ -151,7 +151,7 @@ with col1:
             Be honest and encouraging.
             """
             response = client.models.generate_content(
-                model="gemini-flash-latest", contents=prompt
+                model="gemini-flash-lite-latest", contents=prompt
             )
             st.markdown("## AI Feedback")
             st.write(response.text)
@@ -223,8 +223,10 @@ def analyze_vocal_delivery(audio_bytes, transcript):
 
 
 def transcribe_audio(audio_bytes):
+    import base64
+    encoded_audio = base64.b64encode(audio_bytes).decode("utf-8")
     response = client.models.generate_content(
-        model="gemini-flash-latest",
+        model="gemini-flash-lite-latest",
         contents=[{"text": "Transcribe this spoken interview answer exactly, word for word."},
                   {"inline_data": {"mime_type": "audio/wav", "data": audio_bytes}}],
     )
@@ -238,7 +240,7 @@ Answer: "{answer}"
 Respond in raw JSON only, no markdown fences:
 {{"score": <1-10>, "strengths": ["..."], "improvements": ["..."], "model_answer_snippet": "..."}}"""
     raw = client.models.generate_content(
-        model="gemini-flash-latest", contents=prompt).text
+        model="gemini-flash-lite-latest", contents=prompt).text
     raw = raw.strip().removeprefix("json").removeprefix("").removesuffix("").strip()
     try:
         return json.loads(raw)
@@ -266,7 +268,7 @@ Respond in raw JSON only:
 {{"overall_score": <1-10>, "strengths": ["..."], "weaknesses": ["..."],
 "missing_quantification": ["..."], "one_line_verdict": "..."}}"""
     raw = client.models.generate_content(
-        model="gemini-flash-latest", contents=prompt).text
+        model="gemini-flash-lite-latest", contents=prompt).text
     raw = raw.strip().removeprefix("json").removeprefix("").removesuffix("").strip()
     try:
         return json.loads(raw)
