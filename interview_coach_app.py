@@ -1,6 +1,8 @@
-import streamlit as st
 import random
-
+import streamlit as st
+from google import genai
+client = genai .Client(
+    api_key=st.secrets["GEMINI_API_KEY"])
 # ----------------------------
 # Question Bank
 # ----------------------------
@@ -52,7 +54,8 @@ CATEGORIES = list(QUESTIONS.keys())
 # ----------------------------
 # Page Config
 # ----------------------------
-st.set_page_config(page_title="Smart Interview Coach", page_icon="🎤", layout="centered")
+st.set_page_config(page_title="Smart Interview Coach",
+                   page_icon="🎤", layout="centered")
 
 st.title("🎤 Smart Interview Coach")
 st.write("Practice your interview skills. Pick a category, answer the question, and keep going!")
@@ -64,7 +67,8 @@ if "category" not in st.session_state:
     st.session_state.category = CATEGORIES[0]
 
 if "current_question" not in st.session_state:
-    st.session_state.current_question = random.choice(QUESTIONS[st.session_state.category])
+    st.session_state.current_question = random.choice(
+        QUESTIONS[st.session_state.category])
 
 if "answer" not in st.session_state:
     st.session_state.answer = ""
@@ -95,7 +99,8 @@ selected_category = st.selectbox(
 
 if selected_category != st.session_state.category:
     st.session_state.category = selected_category
-    st.session_state.current_question = random.choice(QUESTIONS[selected_category])
+    st.session_state.current_question = random.choice(
+        QUESTIONS[selected_category])
     st.session_state.answer = ""
 
 st.markdown("---")
@@ -125,10 +130,28 @@ with col1:
     if st.button("✅ Submit Answer", use_container_width=True):
         if st.session_state.answer.strip():
             st.session_state.history.append(
-                (st.session_state.category, st.session_state.current_question, st.session_state.answer)
+                (st.session_state.category,
+                 st.session_state.current_question, st.session_state.answer)
             )
-            st.success("Answer saved! Great job — hit 'Next Question' to keep practicing.")
-        else:
+            prompt = f"""
+            You are an expert interview coach.
+            Interview Question:
+            {st.session_state.current_question}
+            Candidate Answer:
+            {st.session_state.answer}
+            Evaluate the answer and provide:
+            1. Score out of 10
+            2. strengths
+            3. Weaknesses
+            4. Suggestions for improvement 
+            5. A better sample answer
+            Be honest and encouraging.
+            """
+            response = client.models.generate_content(
+                model="gemini-flash-latest", contents=prompt
+            )
+            st.markdown("## AI Feedback")
+            st.write(response.text)
             st.warning("Please write an answer before submitting.")
 
 with col2:
