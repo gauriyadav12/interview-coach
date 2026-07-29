@@ -276,6 +276,43 @@ Respond in raw JSON only:
         return {"error": "Could not parse", "raw": raw}
 
 
+def generate_mock_question(company, role, question_number, previous_questions):
+    prompt = f"""
+    You are simulating a real job interview for the role of {role} at {company}.
+    Generate ONE realistic interview question (question #{question_number} of 5).
+    Do not repeat any of these previous questions: {previous_questions}
+    Return ONLY the question text, nothing else.
+    """
+    response = client.models.generate_content(
+        model="gemini-flash-lite-latest",
+        contents=prompt
+    )
+    return response.text.strip()
+
+
+def generate_mock_summary(qa_list, company, role):
+    transcript = "\n\n".join(
+        [f"Q{i+1}: {qa['question']}\nAnswer: {qa['answer']}" for i,
+            qa in enumerate(qa_list)]
+    )
+    prompt = f"""
+    You are an interview coach. Below is a full mock interview transcript for a {role} position at {company}.
+    Give a summary report with:
+    - Overall performance score out of 10
+    - 2-3 key strengths
+    - 2-3 areas to improve
+    - One motivating closing sentence
+
+    Transcript:
+    {transcript}
+    """
+    response = client.models.generate_content(
+        model="gemini-flash-lite-latest",
+        contents=prompt
+    )
+    return response.text.strip()
+
+
 st.markdown("---")
 st.header("🎙️ Voice Practice, Resume Analyzer & Dashboard")
 
@@ -288,6 +325,16 @@ with new_tab1:
         st.session_state.current_q = random.choice(QUESTIONS[category])
     if "current_q" not in st.session_state:
         st.session_state.current_q = random.choice(QUESTIONS[category])
+
+    company_name = st.text_input("Company name (optional)")
+    role_name = st.text_input(
+        "Role you're applying for (optional)", value="Software Engineer")
+    if st.button("🏢 Generate Company-Specific Question", key="mock_q_btn"):
+        with st.spinner("Generating a tailored question..."):
+            prev_qs = [h["question"] for h in st.session_state.history]
+            q_num = len(prev_qs) + 1
+            st.session_state.current_q = generate_mock_question(
+                company_name or "a top tech company", role_name, q_num, prev_qs)
 
     st.markdown(f"### “{st.session_state.current_q}”")
     audio_value = st.audio_input("Record your answer")
